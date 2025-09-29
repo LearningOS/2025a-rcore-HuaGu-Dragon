@@ -23,3 +23,17 @@ pub enum TaskStatus {
     /// exited
     Exited,
 }
+
+const MAX_SYSCALL_NUM: usize = 1024;
+#[derive(Clone, Copy)]
+pub struct SystemCallCount {
+    pub syscall_counts: [usize; MAX_SYSCALL_NUM],
+}
+
+impl SystemCallCount {
+    pub const fn new() -> Self {
+        SystemCallCount {
+            syscall_counts: [0; MAX_SYSCALL_NUM],
+        }
+    }
+}
