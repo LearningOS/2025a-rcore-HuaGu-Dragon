@@ -28,6 +28,9 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+
+    /// System call count
+    pub syscall_count: SystemCallCount,
 }
 
 impl TaskControlBlock {
@@ -63,6 +66,7 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            syscall_count: SystemCallCount::new(),
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
@@ -96,6 +100,11 @@ impl TaskControlBlock {
             None
         }
     }
+
+    /// get memory set
+    pub unsafe fn get_memory_set(&mut self) -> &'static mut MemorySet {
+        core::mem::transmute(&mut self.memory_set)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -109,4 +118,18 @@ pub enum TaskStatus {
     Running,
     /// exited
     Exited,
+}
+
+const MAX_SYSCALL_NUM: usize = 1024;
+#[derive(Clone, Copy)]
+pub struct SystemCallCount {
+    pub syscall_counts: [usize; MAX_SYSCALL_NUM],
+}
+
+impl SystemCallCount {
+    pub const fn new() -> Self {
+        SystemCallCount {
+            syscall_counts: [0; MAX_SYSCALL_NUM],
+        }
+    }
 }

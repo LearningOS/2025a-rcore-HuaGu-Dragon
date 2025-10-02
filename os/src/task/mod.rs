@@ -15,6 +15,7 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{translated_byte_buffer, MemorySet, PTEFlags, PageTable, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -153,6 +154,67 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn task_syscall(&self, id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_count.syscall_counts[id] += 1;
+    }
+
+    fn get_task_syscall(&self, id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_count.syscall_counts[id]
+    }
+
+    fn get_page(&self) -> PageTable {
+        let token = self.get_current_token();
+        PageTable::from_token(token)
+    }
+
+    fn get_page_flags(&self, addr: usize) -> Option<PTEFlags> {
+        let page_table = self.get_page();
+        let vpn = VirtAddr::from(addr).floor();
+        if let Some(pte) = page_table.translate(vpn) {
+            Some(pte.flags())
+        } else {
+            None
+        }
+    }
+
+    fn user_read(&self, addr: usize) -> isize {
+        let token = self.get_current_token();
+        if let Some(flags) = self.get_page_flags(addr) {
+            if flags.contains(PTEFlags::U) && flags.contains(PTEFlags::R) {
+                let buf = translated_byte_buffer(token, addr as *const u8, 1);
+                if !buf.is_empty() {
+                    return buf[0][0] as isize;
+                }
+            }
+        }
+        -1
+    }
+
+    fn user_write(&self, addr: usize, val: u8) -> isize {
+        let token = self.get_current_token();
+        if let Some(flags) = self.get_page_flags(addr) {
+            if flags.contains(PTEFlags::U) && flags.contains(PTEFlags::W) {
+                let mut buf = translated_byte_buffer(token, addr as *const u8, 1);
+                if !buf.is_empty() {
+                    buf[0][0] = val;
+                    // unsafe { core::ptr::write_volatile(buf[0].as_mut_ptr(), val) };
+                    return 0;
+                }
+            }
+        }
+        -1
+    }
+
+    fn get_current_memory_set(&self) -> &'static mut MemorySet {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        unsafe { inner.tasks[current].get_memory_set() }
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +263,29 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Record a syscall for the current task
+pub fn task_syscall(id: usize) {
+    TASK_MANAGER.task_syscall(id);
+}
+
+/// Get the count of a syscall for the current task
+pub fn count_syscall(id: usize) -> usize {
+    TASK_MANAGER.get_task_syscall(id)
+}
+
+/// implement trace read
+pub fn user_read(addr: usize) -> isize {
+    TASK_MANAGER.user_read(addr)
+}
+
+/// implement trace write
+pub fn user_write(addr: usize, val: u8) -> isize {
+    TASK_MANAGER.user_write(addr, val)
+}
+
+/// Get current memory set
+pub fn current_memory_set() -> &'static mut MemorySet {
+    TASK_MANAGER.get_current_memory_set()
 }

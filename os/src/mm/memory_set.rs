@@ -262,6 +262,88 @@ impl MemorySet {
             false
         }
     }
+
+    /// implement mmap
+    pub fn mmap(&mut self, start: usize, len: usize, prot: usize) -> isize {
+        if start % PAGE_SIZE != 0 || (prot & !0x7) != 0 || (prot & 0x7) == 0 {
+            return -1;
+        }
+        if len == 0 {
+            return 0;
+        }
+
+        let start_va = VirtAddr::from(start);
+        let end_va = VirtAddr::from(start + len);
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if pte.is_valid() {
+                    return -1;
+                }
+            }
+        }
+
+        let mut map_perm = MapPermission::U;
+        if prot & 0x1 != 0 {
+            map_perm |= MapPermission::R;
+        }
+        if prot & 0x2 != 0 {
+            map_perm |= MapPermission::W;
+        }
+        if prot & 0x4 != 0 {
+            map_perm |= MapPermission::X;
+        }
+
+        let map_area = MapArea::new(start_va, end_va, MapType::Framed, map_perm);
+        self.push(map_area, None);
+
+        0
+    }
+
+    /// implement munmap
+    pub fn munmap(&mut self, start: usize, len: usize) -> isize {
+        if start % PAGE_SIZE != 0 || len == 0 {
+            return -1;
+        }
+
+        let start_va = VirtAddr::from(start);
+        let end_va = VirtAddr::from(start + len);
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if !pte.is_valid() {
+                    return -1;
+                }
+            } else {
+                return -1;
+            }
+        }
+
+        let mut areas_to_modify = Vec::new();
+        for (idx, area) in self.areas.iter().enumerate() {
+            let area_start = area.vpn_range.get_start();
+            let area_end = area.vpn_range.get_end();
+
+            if area_start < end_vpn && area_end > start_vpn {
+                areas_to_modify.push(idx);
+            }
+        }
+
+        for idx in areas_to_modify.iter().rev() {
+            let area = &mut self.areas[*idx];
+            for vpn in VPNRange::new(start_vpn, end_vpn) {
+                if vpn >= area.vpn_range.get_start() && vpn < area.vpn_range.get_end() {
+                    area.unmap_one(&mut self.page_table, vpn);
+                }
+            }
+        }
+
+        0
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
